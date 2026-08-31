@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Palette: warm cinematic dark ── */
+  --color-void: #08080a;
+  --color-void-light: #0f0f13;
+  --color-void-mid: #16161c;
+  --color-void-soft: #1e1e26;
+
+  /* Warm off-white text — not pure white, slightly cream */
+  --color-chalk: #e8e4da;
+  --color-chalk-dim: #b0a99a;
+  --color-chalk-muted: #7a7568;
+
+  /* Single accent: warm amber/gold */
+  --color-ember: #d4a843;
+  --color-ember-bright: #e8bf5a;
+  --color-ember-dim: #a07d2e;
+
+  /* CTA button: warm off-white fill */
+  --color-btn: #f0ede6;
+  --color-btn-text: #1a1815;
+
+  /* Font families */
+  --font-display: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+
+  /* ── Type scale: 1.333 ratio (Perfect Fourth) ── */
+  --type-caption: 0.6875rem;   /* 11px */
+  --type-caption-lg: 0.8125rem; /* 13px */
+  --type-body: 0.9375rem;      /* 15px */
+  --type-body-lg: 1.0625rem;   /* 17px */
+  --type-h4: 1.25rem;          /* 20px */
+  --type-h3: 1.625rem;         /* 26px */
+  --type-h2: 2.125rem;         /* 34px */
+  --type-h1: 2.75rem;          /* 44px */
+  --type-display: 3.75rem;     /* 60px */
+  --type-display-lg: 5rem;     /* 80px */
+  --type-display-xl: 6.5rem;   /* 104px — the "Recover it." moment */
+}
+
+/* ── Base ── */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-display);
+  font-size: var(--type-body);
+  line-height: 1.5;
+  background-color: var(--color-void);
+  color: var(--color-chalk);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Tabular numbers */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* ── Selection ── */
+::selection {
+  background-color: var(--color-ember);
+  color: var(--color-void);
+}
+
+/* ── Skip link ── */
+.skip-link {
+  position: fixed;
+  top: -100%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 12px 24px;
+  background: var(--color-btn);
+  color: var(--color-btn-text);
+  font-weight: 500;
+  text-decoration: none;
+  transition: top 0.2s;
+}
+.skip-link:focus {
+  top: 16px;
+}
+
+/* ── Nav scrim transition ── */
+.nav-scrolled {
+  background: rgba(8, 8, 10, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Scroll pulse for opening beat ── */
+@keyframes scrollPulse {
+  0%, 100% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(4px);
+  }
+}
+
+/* ── Fade in slide for audit lines ── */
+@keyframes fadeInSlide {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
