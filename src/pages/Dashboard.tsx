@@ -135,8 +135,6 @@ export default function Dashboard() {
           <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
             <RecoveryCommandCenter
               title="Live batch run"
-              full
-              audit={audit.slice(-5).map((e) => [e.timestamp, e.message])}
               metrics={[
                 {
                   label: "Total at risk",

@@ -22,16 +22,12 @@ const defaultMetrics: CommandMetric[] = [
 export function RecoveryCommandCenter({
   title = "Live batch run",
   metrics = defaultMetrics,
-  audit = [],
   className,
-  full = false,
   children,
 }: {
   title?: string;
   metrics?: CommandMetric[];
-  audit?: Array<[string, string]>;
   className?: string;
-  full?: boolean;
   children?: React.ReactNode;
 }) {
   return (
@@ -47,8 +43,8 @@ export function RecoveryCommandCenter({
       {children ? (
         children
       ) : (
-        <div className={clsx("grid gap-4 p-4", full ? "lg:grid-cols-[1fr_320px]" : "sm:grid-cols-[1fr_0.65fr]")}>
-          <div className={clsx("grid gap-3", full && "sm:grid-cols-2")}>
+        <div className="p-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {metrics.map((metric, index) => (
               <ProgressStat
                 key={metric.label}
@@ -58,25 +54,8 @@ export function RecoveryCommandCenter({
                 tone={metric.tone}
                 highlight={metric.highlight}
                 delay={0.15 + index * 0.08}
-                compact={!full}
               />
             ))}
-          </div>
-
-          <div className="rounded-md border border-chalk-muted/10 bg-black/25 p-3 font-mono text-[11px] leading-6 text-chalk-muted">
-            <Eyebrow className="mb-3">Audit stream</Eyebrow>
-            {audit.length === 0 ? (
-              <p className="text-chalk-muted/50 py-3 text-center">Awaiting batch events…</p>
-            ) : (
-              audit.map(([time, event], index) => (
-                <p key={`${time}-${event}-${index}`}>
-                  <span className={index === audit.length - 1 ? "text-emerald-300" : "text-chalk/70"}>
-                    {time}
-                  </span>{" "}
-                  {event}
-                </p>
-              ))
-            )}
           </div>
         </div>
       )}
