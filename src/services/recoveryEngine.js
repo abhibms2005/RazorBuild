@@ -10,7 +10,7 @@
  * @param {Function} callbacks.appendAudit - Function to append audit log entries
  * @returns {Promise<Object>} Summary of batch processing results
  */
-export async function processBatch(payments, { appendAudit }) {
+async function processBatch(payments, { appendAudit }) {
   const summary = {
     total: payments.length,
     successful: 0,
@@ -134,3 +134,7 @@ function analyzePayment(payment) {
 
   return null;
 }
+
+module.exports = {
+  processBatch
+};

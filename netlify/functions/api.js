@@ -1,5 +1,5 @@
-import serverless from 'serverless-http';
-import app from '../../src/app.js';
+const serverless = require('serverless-http');
+const app = require('../../src/app.js');
 
 /**
  * Netlify Function handler for the Express app
@@ -8,4 +8,4 @@ import app from '../../src/app.js';
  */
 const handler = serverless(app);
 
-export { handler };
+module.exports = { handler };

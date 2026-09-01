@@ -1,10 +1,10 @@
-import supabase from './supabaseClient.js';
+const supabase = require('./supabaseClient.js');
 
 /**
  * Load all payments with their recovery history
  * @returns {Promise<Array>} Array of payment records with nested recovery_history
  */
-export async function loadPayments() {
+async function loadPayments() {
   try {
     const { data, error } = await supabase
       .from('payments')
@@ -26,7 +26,7 @@ export async function loadPayments() {
  * @param {Object} record - Payment record with optional recovery_history array
  * @returns {Promise<Object>} Upserted payment record
  */
-export async function upsertPayment(record) {
+async function upsertPayment(record) {
   try {
     const { recovery_history, ...paymentData } = record;
 
@@ -89,7 +89,7 @@ export async function upsertPayment(record) {
  * @param {Object} entry - Audit log entry
  * @returns {Promise<Object>} Inserted audit log entry
  */
-export async function appendAudit(entry) {
+async function appendAudit(entry) {
   try {
     const { data, error } = await supabase
       .from('audit_log')
@@ -112,7 +112,7 @@ export async function appendAudit(entry) {
  * Load all audit log entries ordered by timestamp (ascending)
  * @returns {Promise<Array>} Array of audit log entries
  */
-export async function loadAudit() {
+async function loadAudit() {
   try {
     const { data, error } = await supabase
       .from('audit_log')
@@ -134,7 +134,7 @@ export async function loadAudit() {
  * Clear all audit log entries (used before a fresh batch run)
  * @returns {Promise<Object>} Delete result
  */
-export async function resetAudit() {
+async function resetAudit() {
   try {
     const { error } = await supabase
       .from('audit_log')
@@ -151,3 +151,11 @@ export async function resetAudit() {
     throw err;
   }
 }
+
+module.exports = {
+  loadPayments,
+  upsertPayment,
+  appendAudit,
+  loadAudit,
+  resetAudit
+};

@@ -1,5 +1,5 @@
-import 'dotenv/config';
-import app from './src/app.js';
+require('dotenv').config();
+const app = require('./src/app.js');
 
 // Local development server only
 // In production, the app runs as a Netlify Function (netlify/functions/api.js)

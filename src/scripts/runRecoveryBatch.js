@@ -1,6 +1,6 @@
-import 'dotenv/config';
-import * as dataStore from '../services/dataStore.js';
-import { processBatch } from '../services/recoveryEngine.js';
+require('dotenv').config();
+const dataStore = require('../services/dataStore.js');
+const { processBatch } = require('../services/recoveryEngine.js');
 
 /**
  * Run the recovery batch process

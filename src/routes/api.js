@@ -1,7 +1,7 @@
-import express from 'express';
-import * as dataStore from '../services/dataStore.js';
-import { processBatch } from '../services/recoveryEngine.js';
-import supabase from '../services/supabaseClient.js';
+const express = require('express');
+const dataStore = require('../services/dataStore.js');
+const { processBatch } = require('../services/recoveryEngine.js');
+const supabase = require('../services/supabaseClient.js');
 
 const router = express.Router();
 
@@ -186,4 +186,4 @@ router.post('/run-batch', async (req, res) => {
   }
 });
 
-export default router;
+module.exports = router;

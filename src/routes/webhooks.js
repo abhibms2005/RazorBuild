@@ -1,5 +1,5 @@
-import express from 'express';
-import * as dataStore from '../services/dataStore.js';
+const express = require('express');
+const dataStore = require('../services/dataStore.js');
 
 const router = express.Router();
 
@@ -98,4 +98,4 @@ router.post('/payment', async (req, res) => {
   }
 });
 
-export default router;
+module.exports = router;

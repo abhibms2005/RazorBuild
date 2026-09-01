@@ -1,5 +1,5 @@
-import 'dotenv/config';
-import supabase from '../services/supabaseClient.js';
+require('dotenv').config();
+const supabase = require('../services/supabaseClient.js');
 
 async function checkSchema() {
   try {
