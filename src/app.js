@@ -1,8 +1,29 @@
 import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
-import apiRoutes from './routes/api.js';
-import webhookRoutes from './routes/webhooks.js';
+import corsModule from 'cors';
+// Explicitly import the router instances to avoid bundler issues
+// Netlify's bundler can sometimes misinterpret ESM imports
+import * as apiRoutesModule from './routes/api.js';
+import * as webhookRoutesModule from './routes/webhooks.js';
+
+// Ensure cors is the function, not a module
+const cors = corsModule && corsModule.default ? corsModule.default : corsModule;
+
+const apiRoutes = apiRoutesModule.default;
+const webhookRoutes = webhookRoutesModule.default;
+
+// Verify routes are valid before using them
+// Express Routers are functions, so check for that
+if (!apiRoutes || typeof apiRoutes !== 'function') {
+  console.error('apiRoutes type:', typeof apiRoutes);
+  console.error('apiRoutes value:', JSON.stringify(apiRoutes, null, 2).substring(0, 200));
+  throw new Error(`Invalid apiRoutes import: expected Express Router function, got ${typeof apiRoutes}`);
+}
+if (!webhookRoutes || typeof webhookRoutes !== 'function') {
+  console.error('webhookRoutes type:', typeof webhookRoutes);
+  console.error('webhookRoutes value:', JSON.stringify(webhookRoutes, null, 2).substring(0, 200));
+  throw new Error(`Invalid webhookRoutes import: expected Express Router function, got ${typeof webhookRoutes}`);
+}
 
 const app = express();
 
