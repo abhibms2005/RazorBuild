@@ -168,9 +168,17 @@ export function useDashboardData(): UseDashboardDataResult {
           if (typeof a?.message === "string" && a.message) {
             message = a.message;
           } else {
-            const stageTag = a?.stage ? `[${a.stage}] ` : a?.action ? `[${a.action}] ` : "";
-            const details = a?.explanation || a?.reason || a?.cause || a?.result || a?.error || a?.payment_id || a?.action || "Log entry recorded";
-            message = `${stageTag}${details}`;
+            const parts: string[] = [];
+            if (a?.stage) parts.push(`[${a.stage}]`);
+            if (a?.action) parts.push(String(a.action));
+            if (a?.cause) parts.push(`cause: ${a.cause}`);
+            if (a?.explanation) parts.push(String(a.explanation));
+            if (a?.reason) parts.push(`reason: ${a.reason}`);
+            if (a?.result) parts.push(`result: ${a.result}`);
+            if (a?.payment_id) parts.push(`(${a.payment_id})`);
+            if (a?.error) parts.push(`error: ${a.error}`);
+
+            message = parts.length > 0 ? parts.join(" ") : "Audit entry recorded";
           }
 
           let level: AuditEntry["level"] = "info";

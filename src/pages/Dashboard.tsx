@@ -136,6 +136,7 @@ export default function Dashboard() {
             <RecoveryCommandCenter
               title="Live batch run"
               full
+              audit={audit.slice(-5).map((e) => [e.timestamp, e.message])}
               metrics={[
                 {
                   label: "Total at risk",
