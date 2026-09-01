@@ -81,7 +81,7 @@ export default function Dashboard() {
       </div>
 
       {/* Header section */}
-      <section className="px-5 pt-8 pb-5 sm:px-8 sm:pt-12 lg:px-12 max-w-7xl mx-auto">
+      <section className="px-5 pt-4 pb-6 sm:px-8 sm:pt-6 sm:pb-8 lg:px-12 max-w-7xl mx-auto">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2 mb-2">

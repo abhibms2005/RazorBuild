@@ -8,7 +8,6 @@ import { Footer } from "./Footer";
  * Home page has its own full-screen layout without this wrapper.
  */
 export function Layout() {
-
   return (
     <div className="min-h-screen text-chalk">
       {/* Skip link */}
@@ -19,8 +18,8 @@ export function Layout() {
       {/* Persistent nav */}
       <Nav />
 
-      {/* Page content */}
-      <main id="main-content" className="pt-14">
+      {/* Page content with proper spacing beneath fixed nav */}
+      <main id="main-content" className="pt-16 sm:pt-20">
         <Outlet />
       </main>
 

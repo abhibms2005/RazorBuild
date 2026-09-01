@@ -9,12 +9,13 @@ interface NavProps {
 
 /**
  * Persistent top nav with scroll-linked scrim.
- * Dashboard button has a slow-pulsing live dot.
+ * On Home page: dynamic scroll opacity.
+ * On Inner pages: crisp blurred dark scrim with persistent boundary.
  */
 export function Nav({ scrollProgress }: NavProps) {
   const navRef = useRef<HTMLElement>(null);
 
-  // Scroll-linked background: transparent at top → dark scrim as user scrolls
+  // Scroll-linked background for home page
   useEffect(() => {
     if (!scrollProgress) return;
     return scrollProgress.on("change", (v: number) => {
@@ -30,11 +31,15 @@ export function Nav({ scrollProgress }: NavProps) {
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `transition-colors ${isActive ? "text-chalk" : "text-chalk-muted hover:text-chalk"}`;
 
+  const defaultStyle = scrollProgress
+    ? { backgroundColor: "rgba(8,8,10,0)", backdropFilter: "blur(0px)" }
+    : { backgroundColor: "rgba(8,8,10,0.85)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" };
+
   return (
     <nav
       ref={navRef}
-      className="fixed top-0 left-0 right-0 z-50 px-5 sm:px-8 py-3 flex items-center justify-between border-b border-chalk-muted/5"
-      style={{ backgroundColor: "rgba(8,8,10,0)", backdropFilter: "blur(0px)" }}
+      className="fixed top-0 left-0 right-0 z-50 px-5 sm:px-8 py-3.5 flex items-center justify-between border-b border-chalk-muted/10"
+      style={defaultStyle}
     >
       {/* Left: wordmark + breadcrumb */}
       <div className="flex items-center gap-2">
