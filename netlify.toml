@@ -1,3 +1,27 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  functions = "netlify/functions"
+  node_version = "18.17.0"
+
+# Redirects: transparently route API calls to the Netlify Function
+# These make /api/summary, /api/records, etc. work as if they're API endpoints
+# without changing any frontend fetch() calls
+
+[[redirects]]
+from = "/api/*"
+to = "/.netlify/functions/api/:splat"
+status = 200
+force = false
+
+[[redirects]]
+from = "/webhooks/*"
+to = "/.netlify/functions/api/webhooks/:splat"
+status = 200
+force = false
+
+# Catch-all for SPA routing (keep React Router working)
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200
