@@ -85,6 +85,10 @@ router.get('/summary', async (req, res) => {
       }
     });
 
+    if (summary.total > 0) {
+      summary.averageRecoveryRate = Math.round(((summary.byStatus.recovered / summary.total) * 100) * 10) / 10;
+    }
+
     res.json({
       status: 'success',
       summary
@@ -146,22 +150,22 @@ router.post('/run-batch', async (req, res) => {
     // Reset audit log for fresh batch run
     await dataStore.resetAudit();
 
-    // Process batch through recovery engine
+    // Process batch through recovery engine with batch audit logging
     const batchSummary = await processBatch(payments, {
-      appendAudit: dataStore.appendAudit
+      appendAudit: dataStore.appendAudit,
+      appendAudits: dataStore.appendAudits
     });
 
-    // Write results back to database
+    // Write results back to database in a single batch call
     let successfulWrites = 0;
     let failedWrites = 0;
 
-    for (const payment of payments) {
-      try {
-        await dataStore.upsertPayment(payment);
-        successfulWrites++;
-      } catch (error) {
-        failedWrites++;
-      }
+    try {
+      const upserted = await dataStore.upsertPayments(payments);
+      successfulWrites = upserted.length;
+    } catch (error) {
+      console.error('Failed to batch upsert payments:', error.message);
+      failedWrites = payments.length;
     }
 
     // Return response with updated state

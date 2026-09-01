@@ -75,7 +75,7 @@ async function runRecoveryBatch() {
     const auditLog = await dataStore.loadAudit();
     auditLog.slice(-5).forEach(entry => {
       console.log(
-        `   [${entry.ts}] ${entry.action} - Status: ${entry.status}`
+        `   [${entry.ts}] [${entry.stage || 'info'}] ${entry.action}: ${entry.explanation || '—'}`
       );
     });
 

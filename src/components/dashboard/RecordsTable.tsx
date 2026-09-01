@@ -106,7 +106,7 @@ function RecordRow({
                     <span className="text-chalk-muted/50 w-20 flex-shrink-0 tabular-nums">
                       {step.timestamp}
                     </span>
-                    <span className="text-ember font-medium w-20 flex-shrink-0 uppercase text-[10px]">
+                    <span className="text-ember font-medium min-w-[190px] flex-shrink-0 uppercase text-[10px]">
                       [{step.action}]
                     </span>
                     <span className="text-chalk-dim flex-1">
