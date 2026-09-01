@@ -96,12 +96,12 @@ function RecordRow({
                   Deterministic Recovery Audit Trail
                 </span>
                 <span className="font-mono text-[10px] text-chalk-muted/60">
-                  {record.recovery_history.length} lifecycle events
+                  {record.recovery_history?.length ?? 0} lifecycle events
                 </span>
               </div>
 
               <div className="space-y-1.5 pl-1">
-                {record.recovery_history.map((step, i) => (
+                {(record.recovery_history || []).map((step, i) => (
                   <div key={i} className="flex items-start gap-3 font-mono text-[11px] leading-relaxed">
                     <span className="text-chalk-muted/50 w-20 flex-shrink-0 tabular-nums">
                       {step.timestamp}
@@ -134,8 +134,10 @@ export function RecordsTable({
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  const safeRecords = Array.isArray(records) ? records : [];
+
   const filtered = useMemo(() => {
-    let result = records;
+    let result = safeRecords;
     if (activeFilter !== "all") {
       result = result.filter((r) => r.status === activeFilter);
     }
@@ -143,14 +145,14 @@ export function RecordsTable({
       const q = search.toLowerCase();
       result = result.filter(
         (r) =>
-          r.customer.toLowerCase().includes(q) ||
-          r.id.toLowerCase().includes(q) ||
-          r.plan.toLowerCase().includes(q) ||
-          r.subscription_id.toLowerCase().includes(q),
+          (r.customer || "").toLowerCase().includes(q) ||
+          (r.id || "").toLowerCase().includes(q) ||
+          (r.plan || "").toLowerCase().includes(q) ||
+          (r.subscription_id || "").toLowerCase().includes(q),
       );
     }
     return result;
-  }, [records, activeFilter, search]);
+  }, [safeRecords, activeFilter, search]);
 
   return (
     <div className="flex flex-col min-h-0 bg-void">

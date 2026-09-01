@@ -4,6 +4,7 @@ import Home from "./pages/Home";
 import HowItWorks from "./pages/HowItWorks";
 import Results from "./pages/Results";
 import Dashboard from "./pages/Dashboard";
+import { DashboardErrorBoundary } from "./components/dashboard/DashboardErrorBoundary";
 
 /**
  * Root app with React Router.
@@ -20,7 +21,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/how-it-works" element={<HowItWorks />} />
         <Route path="/results" element={<Results />} />
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard" element={<DashboardErrorBoundary><Dashboard /></DashboardErrorBoundary>} />
       </Route>
     </Routes>
   );

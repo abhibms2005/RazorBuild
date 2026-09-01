@@ -2,6 +2,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { palette } from "../shared/tokens";
+import { RendererCleanup } from "./RendererCleanup";
 
 function usePageVisible() {
   const [visible, setVisible] = useState(() => typeof document === "undefined" || !document.hidden);
@@ -24,13 +25,16 @@ function Orbit({ visible, status = "live" }: { visible: boolean; status?: "live"
   const ring1 = useRef<THREE.Mesh>(null);
   const ring2 = useRef<THREE.Mesh>(null);
   const satellite = useRef<THREE.Mesh>(null);
+  const elapsedRef = useRef(0);
 
   const primaryColor = status === "running" ? palette.amber : palette.mint;
   const secondaryColor = status === "running" ? palette.red : palette.blue;
 
-  useFrame(({ clock }) => {
+  useFrame((_state, delta) => {
     if (!visible || !group.current) return;
-    const time = clock.getElapsedTime();
+    // Accumulate elapsed time manually from delta to avoid deprecated THREE.Clock
+    elapsedRef.current += delta;
+    const time = elapsedRef.current;
     const speed = status === "running" ? 1.6 : 0.8;
 
     if (ring1.current) {
@@ -96,6 +100,8 @@ function Orbit({ visible, status = "live" }: { visible: boolean; status?: "live"
   );
 }
 
+
+
 export default function OrbitAccent({ status = "live" }: OrbitAccentProps) {
   const visible = usePageVisible();
 
@@ -107,10 +113,11 @@ export default function OrbitAccent({ status = "live" }: OrbitAccentProps) {
       gl={{
         antialias: true,
         alpha: true,
-        powerPreference: "high-performance",
+        powerPreference: "low-power",
       }}
       className="pointer-events-none"
     >
+      <RendererCleanup />
       <ambientLight intensity={0.9} />
       <pointLight position={[2, 2, 4]} color={status === "running" ? palette.amber : palette.mint} intensity={1.2} />
       <Orbit visible={visible} status={status} />

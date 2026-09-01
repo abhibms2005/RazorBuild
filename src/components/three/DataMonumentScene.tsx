@@ -3,6 +3,7 @@ import { Html } from "@react-three/drei";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { palette } from "../shared/tokens";
+import { RendererCleanup } from "./RendererCleanup";
 
 function usePageVisible() {
   const [visible, setVisible] = useState(() => typeof document === "undefined" || !document.hidden);
@@ -63,9 +64,12 @@ function MonumentBar({
   const groupRef = useRef<THREE.Group>(null);
   const [currentHeight, setCurrentHeight] = useState(0.1);
 
-  useFrame(({ clock }) => {
+  const barElapsedRef = useRef(0);
+
+  useFrame((_state, delta) => {
     if (!visible) return;
-    const elapsed = clock.getElapsedTime();
+    barElapsedRef.current += delta;
+    const elapsed = barElapsedRef.current;
 
     // Eased growth entrance
     const startTime = 0.2 + index * 0.15;
@@ -194,9 +198,12 @@ function MonumentScene({
     return () => window.removeEventListener("mousemove", onMouseMove);
   }, []);
 
-  useFrame(({ clock }) => {
+  const sceneElapsedRef = useRef(0);
+
+  useFrame((_state, delta) => {
     if (!visible) return;
-    const time = clock.getElapsedTime();
+    sceneElapsedRef.current += delta;
+    const time = sceneElapsedRef.current;
 
     mouseRef.current.x = THREE.MathUtils.lerp(mouseRef.current.x, mouseRef.current.targetX, 0.05);
     mouseRef.current.y = THREE.MathUtils.lerp(mouseRef.current.y, mouseRef.current.targetY, 0.05);
@@ -254,6 +261,7 @@ export default function DataMonumentScene({ data }: { data?: MonumentData }) {
       }}
       className="pointer-events-none"
     >
+      <RendererCleanup />
       <color attach="background" args={[palette.void]} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[3, 6, 4]} intensity={1.2} />

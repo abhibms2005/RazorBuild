@@ -52,6 +52,19 @@ export interface UseDashboardDataResult {
 }
 
 /**
+ * Map API/DB status strings to the frontend's display statuses.
+ */
+function mapStatus(s: string): PaymentRecord["status"] {
+  switch (s) {
+    case "recovered": return "recovered";
+    case "pending": return "awaiting";
+    case "partial": return "manual-review";
+    case "error": case "failed": return "error";
+    default: return "awaiting";
+  }
+}
+
+/**
  * Dashboard data hook — isolated, testable, swappable.
  * Tracks previous summary for animated count-up on batch run.
  * Handles loading, error, and success-flash states.
@@ -75,13 +88,108 @@ export function useDashboardData(): UseDashboardDataResult {
         fetch(`${API_BASE}/api/audit`),
       ]);
 
+      let loadedRecords: PaymentRecord[] = [];
+      if (recRes.ok) {
+        const json = await recRes.json();
+        const rawRecords = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
+        loadedRecords = rawRecords.map((r: Record<string, unknown>) => ({
+          id: String(r?.id ?? ""),
+          subscription_id: String(r?.subscription_id ?? "—"),
+          customer: String(r?.customer_name ?? r?.customer ?? "Unknown Customer"),
+          plan: String(r?.plan ?? "Standard Plan"),
+          amount: typeof r?.amount === "number" ? r.amount : 0,
+          failure_reason: String(r?.failure_reason ?? r?.failure_code ?? "Payment failure"),
+          status: mapStatus(String(r?.status ?? "")),
+          last_action: String(r?.recovery_action ?? r?.last_action ?? "Automated retry"),
+          timestamp: String(r?.created_at ?? r?.timestamp ?? new Date().toISOString()),
+          recovery_history: Array.isArray(r?.recovery_history)
+            ? r.recovery_history.map((h: Record<string, unknown>) => ({
+                timestamp: typeof h?.ts === "string" ? h.ts.split("T")[1]?.split(".")[0] ?? h.ts : String(h?.timestamp ?? "--:--:--"),
+                action: String(h?.action ?? "action"),
+                outcome: String(h?.outcome ?? "—"),
+              }))
+            : [],
+        }));
+        setRecords(loadedRecords);
+      }
+
       if (sumRes.ok) {
-        const newSummary = await sumRes.json();
+        const json = await sumRes.json();
+        const raw = json?.summary ?? json;
+        
+        // Calculate amount-based breakdown from records if available
+        const totalAmount = loadedRecords.length > 0
+          ? loadedRecords.reduce((acc, r) => acc + (r.amount || 0), 0)
+          : (typeof raw?.totalAmount === "number" ? raw.totalAmount : 0);
+        
+        const recoveredAmount = loadedRecords.length > 0
+          ? loadedRecords.filter(r => r.status === "recovered").reduce((acc, r) => acc + (r.amount || 0), 0)
+          : (raw?.byStatus?.recovered ?? 0);
+        
+        const awaitingAmount = loadedRecords.length > 0
+          ? loadedRecords.filter(r => r.status === "awaiting").reduce((acc, r) => acc + (r.amount || 0), 0)
+          : (raw?.byStatus?.pending ?? 0);
+        
+        const reviewAmount = loadedRecords.length > 0
+          ? loadedRecords.filter(r => r.status === "manual-review").reduce((acc, r) => acc + (r.amount || 0), 0)
+          : (raw?.byStatus?.partial ?? 0);
+        
+        const errorAmount = loadedRecords.length > 0
+          ? loadedRecords.filter(r => r.status === "error").reduce((acc, r) => acc + (r.amount || 0), 0)
+          : (raw?.errors ?? 0);
+        
+        const recoveryRate = totalAmount > 0 ? (recoveredAmount / totalAmount) * 100 : (raw?.averageRecoveryRate ?? 0);
+
+        const newSummary: DashboardSummary = {
+          total_at_risk: totalAmount,
+          recovered: recoveredAmount,
+          awaiting: awaitingAmount,
+          manual_review: reviewAmount,
+          errors: errorAmount,
+          recovery_rate: Math.round(recoveryRate * 10) / 10,
+        };
         prevSummaryRef.current = summary;
         setSummary(newSummary);
       }
-      if (recRes.ok) setRecords(await recRes.json());
-      if (auditRes.ok) setAudit(await auditRes.json());
+
+      if (auditRes.ok) {
+        const json = await auditRes.json();
+        const rawAudit = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
+        const mappedAudit: AuditEntry[] = rawAudit.map((a: Record<string, unknown>) => {
+          let timestamp = "--:--:--";
+          if (typeof a?.timestamp === "string") {
+            timestamp = a.timestamp;
+          } else if (typeof a?.ts === "string") {
+            const timePart = a.ts.split("T")[1];
+            timestamp = timePart ? timePart.replace("Z", "").slice(0, 8) : a.ts;
+          }
+
+          let message = "";
+          if (typeof a?.message === "string" && a.message) {
+            message = a.message;
+          } else {
+            const stageTag = a?.stage ? `[${a.stage}] ` : a?.action ? `[${a.action}] ` : "";
+            const details = a?.explanation || a?.reason || a?.cause || a?.result || a?.error || a?.payment_id || a?.action || "Log entry recorded";
+            message = `${stageTag}${details}`;
+          }
+
+          let level: AuditEntry["level"] = "info";
+          if (a?.level === "warn" || a?.level === "error" || a?.level === "recovered" || a?.level === "info") {
+            level = a.level;
+          } else if (a?.error || message.toLowerCase().includes("error") || message.toLowerCase().includes("malformed") || message.toLowerCase().includes("fail")) {
+            level = "error";
+          } else if (message.toLowerCase().includes("recovered") || message.toLowerCase().includes("settled") || message.toLowerCase().includes("succeeded")) {
+            level = "recovered";
+          }
+
+          return {
+            timestamp,
+            level,
+            message,
+          };
+        });
+        setAudit(mappedAudit);
+      }
     } catch {
       const { mockSummary, mockRecords, mockAudit } = await import("../data/mockDashboard");
       prevSummaryRef.current = summary;

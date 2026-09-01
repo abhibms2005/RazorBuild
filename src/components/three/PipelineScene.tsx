@@ -3,6 +3,7 @@ import { Html } from "@react-three/drei";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { palette } from "../shared/tokens";
+import { RendererCleanup } from "./RendererCleanup";
 
 function usePageVisible() {
   const [visible, setVisible] = useState(() => typeof document === "undefined" || !document.hidden);
@@ -122,9 +123,12 @@ function PipelineMesh({ visible, activeStage = 0 }: { visible: boolean; activeSt
     return () => window.removeEventListener("mousemove", onMouseMove);
   }, []);
 
-  useFrame(({ clock }) => {
+  const elapsedRef = useRef(0);
+
+  useFrame((_state, delta) => {
     if (!visible) return;
-    const time = clock.getElapsedTime();
+    elapsedRef.current += delta;
+    const time = elapsedRef.current;
 
     // Lerp mouse parallax
     mouseRef.current.x = THREE.MathUtils.lerp(mouseRef.current.x, mouseRef.current.targetX, 0.05);
@@ -260,6 +264,7 @@ export default function PipelineScene({ activeStage = 0 }: PipelineSceneProps) {
       }}
       className="pointer-events-none"
     >
+      <RendererCleanup />
       <color attach="background" args={[palette.void]} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[4, 5, 4]} intensity={1.2} color="#ffffff" />

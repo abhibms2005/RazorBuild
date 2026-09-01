@@ -10,19 +10,24 @@ const stageConfig: Record<string, { icon: string; borderColor: string; color: st
   error:    { icon: "✗", borderColor: "border-l-red-400", color: "text-red-300", label: "error" },
 };
 
-function getStage(message: string, level?: string): string {
+function getStage(message?: string, level?: string): string {
   if (level === "recovered") return "recovered";
-  if (message.includes("[diagnose]")) return "diagnose";
-  if (message.includes("[decide]")) return "decide";
-  if (message.includes("[execute]")) return "execute";
-  if (message.includes("[detect]")) return "detect";
-  if (level === "error" || message.includes("error") || message.includes("blocklist")) return "error";
+  const msg = typeof message === "string" ? message.toLowerCase() : "";
+  if (msg.includes("[diagnose]") || msg.includes("diagnose")) return "diagnose";
+  if (msg.includes("[decide]") || msg.includes("decide")) return "decide";
+  if (msg.includes("[execute]") || msg.includes("execute")) return "execute";
+  if (msg.includes("[detect]") || msg.includes("detect")) return "detect";
+  if (level === "error" || msg.includes("error") || msg.includes("blocklist") || msg.includes("malformed") || msg.includes("fail")) return "error";
   return "detect";
 }
 
 function AuditLine({ entry, isNew }: { entry: AuditEntry; isNew?: boolean }) {
-  const stage = getStage(entry.message, entry.level);
+  const message = entry?.message || "Audit event recorded";
+  const stage = getStage(message, entry?.level);
   const config = stageConfig[stage] || stageConfig.detect;
+  const timeStr = typeof entry?.timestamp === "string"
+    ? (entry.timestamp.split(".")[0] || entry.timestamp)
+    : "--:--:--";
 
   return (
     <div
@@ -31,13 +36,13 @@ function AuditLine({ entry, isNew }: { entry: AuditEntry; isNew?: boolean }) {
       }`}
     >
       <span className="text-chalk-muted/50 w-16 flex-shrink-0 tabular-nums select-none text-[10px]">
-        {entry.timestamp.split(".")[0]}
+        {timeStr}
       </span>
       <span className={`w-4 flex-shrink-0 text-center font-bold select-none ${config.color}`} aria-hidden="true">
         {config.icon}
       </span>
       <span className="text-chalk-dim/90 flex-1 min-w-0 break-words">
-        {entry.message}
+        {message}
       </span>
     </div>
   );
@@ -52,12 +57,13 @@ export function AuditTapePanel({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newCount, setNewCount] = useState(0);
-  const prevLengthRef = useRef(entries.length);
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const prevLengthRef = useRef(safeEntries.length);
 
   // Track new entries
   useEffect(() => {
-    if (entries.length > prevLengthRef.current) {
-      const added = entries.length - prevLengthRef.current;
+    if (safeEntries.length > prevLengthRef.current) {
+      const added = safeEntries.length - prevLengthRef.current;
       setNewCount((c) => c + added);
       const el = scrollRef.current;
       if (el) {
@@ -66,8 +72,8 @@ export function AuditTapePanel({
         }, 80);
       }
     }
-    prevLengthRef.current = entries.length;
-  }, [entries.length]);
+    prevLengthRef.current = safeEntries.length;
+  }, [safeEntries.length]);
 
   return (
     <div className="flex flex-col h-full bg-void-light/20">
@@ -90,7 +96,7 @@ export function AuditTapePanel({
             </span>
           )}
           <span className="font-mono text-[10px] text-chalk-muted/60 tabular-nums">
-            {entries.length} entries
+            {safeEntries.length} entries
           </span>
         </div>
       </div>
@@ -110,16 +116,16 @@ export function AuditTapePanel({
               <div className="h-2.5 bg-void-soft rounded w-full" />
             </div>
           ))
-        ) : entries.length === 0 ? (
+        ) : safeEntries.length === 0 ? (
           <div className="py-12 text-center font-mono text-xs text-chalk-muted/40">
             Awaiting batch events…
           </div>
         ) : (
-          entries.map((entry, i) => (
+          safeEntries.map((entry, i) => (
             <AuditLine
-              key={`${entry.timestamp}-${i}`}
+              key={`${entry?.timestamp || i}-${i}`}
               entry={entry}
-              isNew={i >= entries.length - newCount}
+              isNew={i >= safeEntries.length - newCount}
             />
           ))
         )}

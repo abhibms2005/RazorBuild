@@ -2,6 +2,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { palette } from "../shared/tokens";
+import { RendererCleanup } from "../three/RendererCleanup";
 
 function usePageVisible() {
   const [visible, setVisible] = useState(() => typeof document === "undefined" || !document.hidden);
@@ -120,9 +121,12 @@ function ParticleStream({ visible }: ParticleStreamProps) {
   const amberPacketCount = 14;
   const mintPacketCount = 16;
 
-  useFrame(({ clock }) => {
+  const elapsedRef = useRef(0);
+
+  useFrame((_state, delta) => {
     if (!visible) return;
-    const time = clock.getElapsedTime();
+    elapsedRef.current += delta;
+    const time = elapsedRef.current;
 
     // Smooth mouse parallax lerp
     mouse.current.x = THREE.MathUtils.lerp(mouse.current.x, mouse.current.targetX, 0.05);
@@ -224,6 +228,7 @@ export default function HeroParticlesScene() {
       }}
       className="pointer-events-none"
     >
+      <RendererCleanup />
       <ambientLight intensity={0.8} />
       <ParticleStream visible={visible} />
     </Canvas>

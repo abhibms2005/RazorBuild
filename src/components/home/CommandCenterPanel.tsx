@@ -90,13 +90,20 @@ export function CommandCenterPanel() {
 
         if (audRes.ok && isMounted) {
           const audData = await audRes.json();
-          const items = audData.data || audData;
-          if (Array.isArray(items) && items.length > 0) {
-            const formatted = items.slice(-5).map((entry: any) => ({
-              time: entry.timestamp?.split("T")?.[1]?.substring(0, 8) || entry.timestamp || "12:05:00",
-              event: entry.message || `${entry.action}.${entry.outcome || "processed"}`,
-              level: entry.level || "info",
-            }));
+          const items = Array.isArray(audData) ? audData : Array.isArray(audData?.data) ? audData.data : [];
+          if (items.length > 0) {
+            const formatted = items.slice(-5).map((entry: any) => {
+              const rawTime = entry?.timestamp || entry?.ts || "";
+              const time = typeof rawTime === "string" && rawTime.includes("T")
+                ? rawTime.split("T")[1]?.substring(0, 8)
+                : (typeof rawTime === "string" && rawTime ? rawTime : "12:05:00");
+              const event = entry?.message || (entry?.action ? `[${entry.action}] ${entry.explanation || entry.result || entry.payment_id || "processed"}` : "Event logged");
+              return {
+                time,
+                event,
+                level: entry?.level || (entry?.error ? "error" : "info"),
+              };
+            });
             setAuditLines(formatted);
           }
         }
