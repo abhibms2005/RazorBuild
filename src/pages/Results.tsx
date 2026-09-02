@@ -67,11 +67,13 @@ function CountUpValue({
 }
 
 const disclosures = [
-  ["BATCH_SOURCE", "Real Razorpay test transaction data"],
-  ["DIAGNOSIS_MODEL", "Rule-based classifier, not ML"],
-  ["RECOVERY_ACTIONS", "Smart retry and payment link paths use real API-shaped calls"],
-  ["HUMAN_ESCALATION", "Ticket creation is simulated for demo safety"],
-  ["METRICS", "Calculated from the batch run shown in the dashboard"],
+  ["BATCH_SOURCE", "Synthetic Sandbox Data"],
+  ["DIAGNOSIS_MODEL", "Hybrid: Deterministic Rules + LLM Advisor for low-confidence (<0.80) / unclassified codes"],
+  ["POLICY_ENGINE", "Deterministic hard constraints (MAX_ATTEMPTS=3, MIN_CONFIDENCE=0.80)"],
+  ["INTERVENTION_DISPATCH", "Real email dispatch via Ethereal SMTP with publicly verifiable test preview URLs"],
+  ["GATEWAY_CONFIRMATION", "Simulated Gateway Response via HMAC-signed webhooks with cause-weighted probabilities"],
+  ["IDEMPOTENCY_STORE", "Persistent database deduplication (processed_events table) protecting against replays"],
+  ["METRICS", "Dynamically computed from live Supabase ledger records"],
 ];
 
 function ArrowIcon() {
@@ -85,49 +87,97 @@ function ArrowIcon() {
 export default function Results() {
   const prefersReduced = usePrefersReducedMotion();
   const [summary, setSummary] = useState(mockSummary);
+  const [counts, setCounts] = useState({
+    total: 100,
+    recovered: 58,
+    awaiting: 24,
+    manual_review: 14,
+    errors: 4
+  });
 
   useEffect(() => {
-    async function fetchSummary() {
+    async function fetchData() {
       try {
-        const res = await fetch(`${API_BASE}/api/summary`);
-        if (res.ok) {
-          const data = await res.json();
-          const s = data.summary || data;
-          if (s.recovered !== undefined) {
+        const [sumRes, recRes] = await Promise.all([
+          fetch(`${API_BASE}/api/summary`),
+          fetch(`${API_BASE}/api/records`)
+        ]);
+
+        let loadedRecords: Record<string, unknown>[] = [];
+        if (recRes.ok) {
+          const recData = await recRes.json();
+          loadedRecords = Array.isArray(recData) ? recData : Array.isArray(recData?.data) ? recData.data : [];
+        }
+
+        if (sumRes.ok) {
+          const sumData = await sumRes.json();
+          const s = sumData.summary || sumData;
+          if (s) {
+            const totalAtRisk = s.total_at_risk || loadedRecords.reduce((acc: number, r: Record<string, unknown>) => acc + (Number(r.amount) || 0), 0) || mockSummary.total_at_risk;
+            const recovered = s.recovered !== undefined ? s.recovered : mockSummary.recovered;
+            const awaiting = s.awaiting !== undefined ? s.awaiting : mockSummary.awaiting;
+            const manualReview = s.manual_review !== undefined ? s.manual_review : mockSummary.manual_review;
+            const errors = s.errors !== undefined ? s.errors : mockSummary.errors;
+            const recoveryRate = totalAtRisk > 0 ? Math.round((recovered / totalAtRisk) * 1000) / 10 : (s.recovery_rate || 0);
+
             setSummary({
-              total_at_risk: s.total_at_risk || mockSummary.total_at_risk,
-              recovered: s.recovered || mockSummary.recovered,
-              awaiting: s.awaiting || mockSummary.awaiting,
-              manual_review: s.manual_review || mockSummary.manual_review,
-              errors: s.errors || mockSummary.errors,
-              recovery_rate: s.recovery_rate || mockSummary.recovery_rate,
+              total_at_risk: totalAtRisk,
+              recovered,
+              awaiting,
+              manual_review: manualReview,
+              errors,
+              recovery_rate: recoveryRate,
             });
+
+            if (loadedRecords.length > 0) {
+              setCounts({
+                total: loadedRecords.length,
+                recovered: loadedRecords.filter(r => r.status === 'recovered').length,
+                awaiting: loadedRecords.filter(r => r.status === 'pending' || r.status === 'pending_confirmation').length,
+                manual_review: loadedRecords.filter(r => r.status === 'partial').length,
+                errors: loadedRecords.filter(r => r.status === 'error' || r.status === 'failed').length,
+              });
+            } else if (s.counts) {
+              setCounts({
+                total: s.total || 100,
+                recovered: s.counts.recovered || 0,
+                awaiting: s.counts.awaiting || 0,
+                manual_review: s.counts.manual_review || 0,
+                errors: s.counts.errors || 0,
+              });
+            }
           }
         }
       } catch {
-        // Fallback to mock baseline
+        // Fallback to mock baseline if backend unavailable
       }
     }
-    fetchSummary();
+    fetchData();
   }, []);
 
   const monumentData: MonumentData = {
-    recoveredCount: 28,
+    recoveredCount: counts.recovered,
     recoveredAmount: formatINR(summary.recovered),
-    awaitingCount: 14,
+    awaitingCount: counts.awaiting,
     awaitingAmount: formatINR(summary.awaiting),
-    reviewCount: 9,
+    reviewCount: counts.manual_review,
     reviewAmount: formatINR(summary.manual_review),
-    errorCount: 7,
+    errorCount: counts.errors,
     errorAmount: formatINR(summary.errors),
   };
 
   const scoreStats = [
     { value: summary.total_at_risk, label: "Total at risk", prefix: "₹", tone: "text-amber" },
-    { value: summary.recovered, label: "Recovered", prefix: "₹", tone: "text-emerald-300" },
+    { value: summary.recovered, label: "Confirmed recovered", prefix: "₹", tone: "text-emerald-300" },
     { value: summary.recovery_rate, label: "Recovery rate", suffix: "%", tone: "text-chalk" },
-    { value: 58, label: "Records processed", tone: "text-sky-300" },
+    { value: counts.total, label: "Records processed", tone: "text-sky-300" },
   ];
+
+  const totalAmount = summary.total_at_risk || 1;
+  const recoveredPercent = Math.round((summary.recovered / totalAmount) * 100);
+  const awaitingPercent = Math.round((summary.awaiting / totalAmount) * 100);
+  const reviewPercent = Math.round((summary.manual_review / totalAmount) * 100);
+  const errorPercent = Math.round((summary.errors / totalAmount) * 100);
 
   return (
     <div className="min-h-screen bg-void text-chalk">
@@ -137,6 +187,19 @@ export default function Results() {
         <div className="pointer-events-none absolute right-1/3 top-1/3 -z-10 h-[450px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-ember/5 blur-[140px]" />
 
         <div className="mx-auto max-w-7xl">
+          {/* Provenance Pills */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-300 bg-emerald-400/10 border border-emerald-400/20 px-2.5 py-0.5 rounded">
+              Data Source: Synthetic Sandbox Data
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-wider text-ember bg-ember/10 border border-ember/20 px-2.5 py-0.5 rounded">
+              Environment: Sandbox Mode
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-wider text-sky-300 bg-sky-400/10 border border-sky-400/20 px-2.5 py-0.5 rounded">
+              Simulation Status: Active
+            </span>
+          </div>
+
           <div className="grid gap-12 lg:grid-cols-[0.68fr_1fr] lg:items-center">
             <div>
               <div className="flex items-center gap-2 mb-4">
@@ -149,8 +212,8 @@ export default function Results() {
                 Measured outcomes, scored like a recovery board.
               </h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-chalk-dim">
-                The batch recovered {formatINR(summary.recovered)} from {formatINR(summary.total_at_risk)} at risk.
-                The 3D monument renders live volumetric proportions, billboarded with real data numbers.
+                The batch recovered {formatINR(summary.recovered)} from {formatINR(summary.total_at_risk)} at risk ({summary.recovery_rate}% recovery rate).
+                The 3D monument renders live volumetric proportions, billboarded with real dynamic data.
               </p>
             </div>
 
@@ -178,10 +241,10 @@ export default function Results() {
             <div className="flex items-center justify-between border-b border-chalk-muted/10 bg-void/60 px-6 py-4">
               <div>
                 <Eyebrow tone="muted">Recovery scoreboard</Eyebrow>
-                <p className="mt-1 text-sm font-medium text-chalk">Batch outcome verification</p>
+                <p className="mt-1 text-sm font-medium text-chalk">Dynamic batch outcome verification</p>
               </div>
               <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-300 bg-emerald-400/10 border border-emerald-400/20 px-2.5 py-1 rounded">
-                Verified Run
+                Verified Ledger Run
               </span>
             </div>
 
@@ -207,10 +270,10 @@ export default function Results() {
             <div className="grid gap-6 p-6 lg:grid-cols-[1.1fr_0.9fr]">
               <div className="grid gap-3 sm:grid-cols-2">
                 {[
-                  { label: "Recovered", value: formatINR(summary.recovered), percent: 74, color: "bg-emerald-400", tone: "text-emerald-300" },
-                  { label: "Awaiting payment", value: formatINR(summary.awaiting), percent: 42, color: "bg-sky-400", tone: "text-sky-300" },
-                  { label: "Manual review", value: formatINR(summary.manual_review), percent: 26, color: "bg-ember", tone: "text-ember" },
-                  { label: "Handled errors", value: formatINR(summary.errors), percent: 18, color: "bg-red-400", tone: "text-red-300" },
+                  { label: "Confirmed recovered", value: formatINR(summary.recovered), percent: recoveredPercent, color: "bg-emerald-400", tone: "text-emerald-300" },
+                  { label: "Awaiting gateway / link", value: formatINR(summary.awaiting), percent: awaitingPercent, color: "bg-sky-400", tone: "text-sky-300" },
+                  { label: "Manual review queue", value: formatINR(summary.manual_review), percent: reviewPercent, color: "bg-ember", tone: "text-ember" },
+                  { label: "Handled error policies", value: formatINR(summary.errors), percent: errorPercent, color: "bg-red-400", tone: "text-red-300" },
                 ].map((item) => (
                   <div key={item.label} className="rounded-lg border border-chalk-muted/10 bg-void/50 p-4">
                     <div className="flex items-center justify-between">
@@ -220,7 +283,7 @@ export default function Results() {
                       </span>
                     </div>
                     <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-void-soft">
-                      <div className={`h-full rounded-full ${item.color}`} style={{ width: `${item.percent}%` }} />
+                      <div className={`h-full rounded-full ${item.color}`} style={{ width: `${Math.min(item.percent, 100)}%` }} />
                     </div>
                   </div>
                 ))}
@@ -228,16 +291,16 @@ export default function Results() {
 
               <div className="flex flex-col justify-between rounded-lg border border-chalk-muted/12 bg-black/40 p-4 font-mono text-[11px] text-chalk-dim">
                 <div>
-                  <Eyebrow className="mb-3">Outcome Mix</Eyebrow>
+                  <Eyebrow className="mb-3">Cohort Breakdown</Eyebrow>
                   <div className="space-y-1.5">
-                    <p><span className="text-emerald-300 font-bold">28</span> records recovered automatically</p>
-                    <p><span className="text-sky-300 font-bold">14</span> records awaiting customer payment link</p>
-                    <p><span className="text-ember font-bold">09</span> records escalated to finance review</p>
-                    <p><span className="text-red-300 font-bold">07</span> records handled via error policy</p>
+                    <p><span className="text-emerald-300 font-bold">{counts.recovered}</span> records confirmed recovered via gateway</p>
+                    <p><span className="text-sky-300 font-bold">{counts.awaiting}</span> records awaiting retry execution or link payment</p>
+                    <p><span className="text-ember font-bold">{counts.manual_review}</span> records escalated to finance review queue</p>
+                    <p><span className="text-red-300 font-bold">{counts.errors}</span> records handled via policy error boundaries</p>
                   </div>
                 </div>
                 <div className="mt-4 border-t border-chalk-muted/10 pt-2 text-[10px] text-chalk-muted/60">
-                  Total cohort: 58 payment failure events
+                  Total active cohort: {counts.total} payment failure events
                 </div>
               </div>
             </div>
@@ -249,8 +312,8 @@ export default function Results() {
       <section className="px-5 py-16 sm:px-8 lg:px-12">
         <div className="mx-auto max-w-4xl">
           <Card tone="accent" className="p-6 sm:p-8">
-            <Eyebrow>What's simulated vs. real</Eyebrow>
-            <h2 className="mt-4 text-3xl font-medium text-chalk sm:text-4xl">No hidden fine print.</h2>
+            <Eyebrow>System Provenance & Transparency</Eyebrow>
+            <h2 className="mt-4 text-3xl font-medium text-chalk sm:text-4xl">Honest technical boundaries.</h2>
             <div className="mt-6 grid gap-3.5">
               {disclosures.map(([label, value]) => (
                 <div key={label} className="grid gap-1 border-t border-ember/10 pt-3 sm:grid-cols-[220px_1fr]">

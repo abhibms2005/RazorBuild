@@ -2,7 +2,12 @@
  * Diagnosis Engine for Failed Payments
  * Analyzes failure codes, messages, and transaction context
  * to classify the root cause with calibrated confidence scores.
+ * 
+ * Includes deterministic fast-path CAUSE_MAP and asynchronous
+ * AI Advisor consultation for low-confidence (<0.80) / unclassified events.
  */
+
+const { consultLLM } = require('./aiAdvisor.js');
 
 const CAUSE_MAP = {
   insufficient_funds: {
@@ -55,7 +60,7 @@ const CAUSE_MAP = {
       'DECLINED_BY_RISK'
     ],
     keywords: ['risk', 'fraud', 'security', 'do not honour', 'declined by bank policy', 'declined by issuer risk'],
-    confidence: 0.75, // Below 0.80 threshold -> triggers manual review
+    confidence: 0.75, // Below 0.80 threshold -> triggers AI consult & manual review
     retryEligible: false,
     explanation: 'Issuer risk scoring flagged transaction for manual verification'
   },
@@ -101,9 +106,9 @@ const CAUSE_MAP = {
 };
 
 /**
- * Diagnose a payment failure from code and message context
+ * Fast synchronous deterministic diagnosis
  * @param {Object} payment - Payment record
- * @returns {Object} Diagnosis outcome with cause, confidence, retryEligible, explanation
+ * @returns {Object} Diagnosis outcome
  */
 function diagnose(payment) {
   if (!payment) {
@@ -133,7 +138,8 @@ function diagnose(payment) {
         confidence: causeDef.confidence,
         retryEligible: causeDef.retryEligible,
         explanation: causeDef.explanation,
-        reason: causeKey
+        reason: causeKey,
+        isAiDiagnosed: false
       };
     }
   }
@@ -144,11 +150,49 @@ function diagnose(payment) {
     confidence: 0.55,
     retryEligible: false,
     explanation: payment.failure_reason || 'Unclassified failure code or missing reason',
-    reason: payment.failure_code || 'unknown'
+    reason: payment.failure_code || 'unknown',
+    isAiDiagnosed: false
   };
+}
+
+/**
+ * Asynchronous diagnosis pipeline with LLM Advisor integration
+ * Uses deterministic CAUSE_MAP first; if confidence < 0.80 or unknown cause,
+ * consults AI Advisor for contextual analysis.
+ * 
+ * @param {Object} payment - Payment record
+ * @returns {Promise<Object>} Enriched diagnosis outcome
+ */
+async function diagnoseAsync(payment) {
+  const ruleResult = diagnose(payment);
+
+  // Invoke AI advisor ONLY when rule confidence < 0.80 OR cause is unknown_failure
+  if (ruleResult.confidence < 0.80 || ruleResult.cause === 'unknown_failure') {
+    try {
+      const aiResponse = await consultLLM(payment, ruleResult);
+      return {
+        ...ruleResult,
+        isAiDiagnosed: true,
+        aiRecommendation: aiResponse,
+        explanation: aiResponse.business_explanation || ruleResult.explanation,
+        // AI proposed confidence is factored into diagnostic context
+        aiConfidence: aiResponse.confidence
+      };
+    } catch (err) {
+      console.warn('AI Advisor consultation failed:', err.message);
+      return {
+        ...ruleResult,
+        isAiDiagnosed: false,
+        aiError: err.message
+      };
+    }
+  }
+
+  return ruleResult;
 }
 
 module.exports = {
   CAUSE_MAP,
-  diagnose
+  diagnose,
+  diagnoseAsync
 };

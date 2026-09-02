@@ -34,9 +34,15 @@ export interface DashboardSummary {
   manual_review: number;
   errors: number;
   recovery_rate: number;
+  counts?: {
+    recovered: number;
+    awaiting: number;
+    manual_review: number;
+    errors: number;
+  };
 }
 
-export type SummaryKey = keyof Omit<DashboardSummary, "recovery_rate">;
+export type SummaryKey = keyof Omit<DashboardSummary, "recovery_rate" | "counts">;
 
 export interface UseDashboardDataResult {
   summary: DashboardSummary | null;
@@ -45,6 +51,7 @@ export interface UseDashboardDataResult {
   audit: AuditEntry[];
   loading: boolean;
   error: string | null;
+  isOfflineMode: boolean;
   running: boolean;
   successFlash: boolean;
   runBatch: () => Promise<void>;
@@ -57,17 +64,18 @@ export interface UseDashboardDataResult {
 function mapStatus(s: string): PaymentRecord["status"] {
   switch (s) {
     case "recovered": return "recovered";
-    case "pending": return "awaiting";
+    case "pending":
+    case "pending_confirmation": return "awaiting";
     case "partial": return "manual-review";
-    case "error": case "failed": return "error";
+    case "error":
+    case "failed": return "error";
     default: return "awaiting";
   }
 }
 
 /**
- * Dashboard data hook — isolated, testable, swappable.
- * Tracks previous summary for animated count-up on batch run.
- * Handles loading, error, and success-flash states.
+ * Dashboard data hook — tracks live Supabase records, audit tape, and batch status.
+ * Never silently masks backend connection failures as real live data.
  */
 export function useDashboardData(): UseDashboardDataResult {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -76,6 +84,7 @@ export function useDashboardData(): UseDashboardDataResult {
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [running, setRunning] = useState(false);
   const [successFlash, setSuccessFlash] = useState(false);
 
@@ -88,7 +97,13 @@ export function useDashboardData(): UseDashboardDataResult {
         fetch(`${API_BASE}/api/audit`),
       ]);
 
+      if (!sumRes.ok && !recRes.ok) {
+        throw new Error(`API server responded with status: ${sumRes.status || recRes.status}`);
+      }
+
+      setIsOfflineMode(false);
       let loadedRecords: PaymentRecord[] = [];
+
       if (recRes.ok) {
         const json = await recRes.json();
         const rawRecords = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
@@ -100,7 +115,7 @@ export function useDashboardData(): UseDashboardDataResult {
           amount: typeof r?.amount === "number" ? r.amount : 0,
           failure_reason: String(r?.failure_reason ?? r?.failure_code ?? "Payment failure"),
           status: mapStatus(String(r?.status ?? "")),
-          last_action: String(r?.recovery_action ?? r?.last_action ?? "Automated retry"),
+          last_action: String(r?.recovery_action ?? r?.last_action ?? "Awaiting Evaluation"),
           timestamp: String(r?.created_at ?? r?.timestamp ?? new Date().toISOString()),
           recovery_history: Array.isArray(r?.recovery_history)
             ? r.recovery_history.map((h: Record<string, unknown>) => ({
@@ -120,25 +135,27 @@ export function useDashboardData(): UseDashboardDataResult {
         // Calculate amount-based breakdown from records if available
         const totalAmount = loadedRecords.length > 0
           ? loadedRecords.reduce((acc, r) => acc + (r.amount || 0), 0)
-          : (typeof raw?.totalAmount === "number" ? raw.totalAmount : 0);
+          : (typeof raw?.total_at_risk === "number" ? raw.total_at_risk : (raw?.totalAmount ?? 0));
         
         const recoveredAmount = loadedRecords.length > 0
           ? loadedRecords.filter(r => r.status === "recovered").reduce((acc, r) => acc + (r.amount || 0), 0)
-          : (raw?.byStatus?.recovered ?? 0);
+          : (raw?.recovered ?? 0);
         
         const awaitingAmount = loadedRecords.length > 0
           ? loadedRecords.filter(r => r.status === "awaiting").reduce((acc, r) => acc + (r.amount || 0), 0)
-          : (raw?.byStatus?.pending ?? 0);
+          : (raw?.awaiting ?? 0);
         
         const reviewAmount = loadedRecords.length > 0
           ? loadedRecords.filter(r => r.status === "manual-review").reduce((acc, r) => acc + (r.amount || 0), 0)
-          : (raw?.byStatus?.partial ?? 0);
+          : (raw?.manual_review ?? 0);
         
         const errorAmount = loadedRecords.length > 0
           ? loadedRecords.filter(r => r.status === "error").reduce((acc, r) => acc + (r.amount || 0), 0)
           : (raw?.errors ?? 0);
         
-        const recoveryRate = totalAmount > 0 ? (recoveredAmount / totalAmount) * 100 : (raw?.averageRecoveryRate ?? 0);
+        const recoveryRate = totalAmount > 0 
+          ? Math.round((recoveredAmount / totalAmount) * 1000) / 10 
+          : (raw?.recovery_rate ?? 0);
 
         const newSummary: DashboardSummary = {
           total_at_risk: totalAmount,
@@ -146,7 +163,13 @@ export function useDashboardData(): UseDashboardDataResult {
           awaiting: awaitingAmount,
           manual_review: reviewAmount,
           errors: errorAmount,
-          recovery_rate: Math.round(recoveryRate * 10) / 10,
+          recovery_rate: recoveryRate,
+          counts: raw?.counts || {
+            recovered: loadedRecords.filter(r => r.status === "recovered").length,
+            awaiting: loadedRecords.filter(r => r.status === "awaiting").length,
+            manual_review: loadedRecords.filter(r => r.status === "manual-review").length,
+            errors: loadedRecords.filter(r => r.status === "error").length,
+          }
         };
         prevSummaryRef.current = summary;
         setSummary(newSummary);
@@ -198,7 +221,12 @@ export function useDashboardData(): UseDashboardDataResult {
         });
         setAudit(mappedAudit);
       }
-    } catch {
+    } catch (err: unknown) {
+      // VISIBLE FALLBACK: Show warning banner instead of silently pretending mock data is live
+      const msg = err instanceof Error ? err.message : "API server unreachable";
+      setError(`⚠️ Backend unavailable (${msg}) — Displaying offline sandbox snapshot`);
+      setIsOfflineMode(true);
+
       const { mockSummary, mockRecords, mockAudit } = await import("../data/mockDashboard");
       prevSummaryRef.current = summary;
       setSummary(mockSummary);
@@ -214,18 +242,17 @@ export function useDashboardData(): UseDashboardDataResult {
     setSuccessFlash(false);
     try {
       const res = await fetch(`${API_BASE}/api/run-batch`, { method: "POST" });
-      if (res.ok || !API_BASE) {
-        // In demo mode, simulate with mock data
-        await new Promise((r) => setTimeout(r, 1200));
+      if (res.ok) {
         await fetchData();
         setSuccessFlash(true);
-        setTimeout(() => setSuccessFlash(false), 1500);
+        setTimeout(() => setSuccessFlash(false), 1800);
+      } else {
+        throw new Error(`Batch run failed with status ${res.status}`);
       }
-    } catch {
-      await new Promise((r) => setTimeout(r, 1200));
-      await fetchData();
-      setSuccessFlash(true);
-      setTimeout(() => setSuccessFlash(false), 1500);
+    } catch (err: unknown) {
+      console.warn("Backend batch run error:", err);
+      // If server unreachable, notify clearly
+      setError("⚠️ Cannot trigger live batch: Backend service is not reachable on port 3000");
     } finally {
       setRunning(false);
     }
@@ -242,6 +269,7 @@ export function useDashboardData(): UseDashboardDataResult {
     audit,
     loading,
     error,
+    isOfflineMode,
     running,
     successFlash,
     runBatch,

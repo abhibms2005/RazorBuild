@@ -1,4 +1,11 @@
+/**
+ * DataStore Service - Supabase persistence layer for Payments, Audit Log, and Idempotency
+ */
+
 const supabase = require('./supabaseClient.js');
+
+// In-memory fallback cache in case Supabase table is temporarily initializing
+const inMemoryProcessedEvents = new Set();
 
 /**
  * Load all payments with their recovery history
@@ -69,7 +76,6 @@ async function upsertPayment(record) {
 
 /**
  * High-performance batch upsert for payments and recovery history
- * Performs updates in a single round-trip instead of N sequential requests.
  * @param {Array} payments - Array of payment records with recovery_history
  * @returns {Promise<Array>} Array of upserted payment records
  */
@@ -122,6 +128,139 @@ async function upsertPayments(payments) {
   } catch (err) {
     console.error('Error in batch upsertPayments:', err.message);
     throw err;
+  }
+}
+
+/**
+ * Confirm outcome of a payment recovery attempt (Stage 7 of pipeline)
+ * Transitions status to 'recovered' or 'partial' upon verified confirmation event.
+ * 
+ * @param {string} paymentId - Payment ID to confirm
+ * @param {Object} confirmation - Confirmation metadata
+ * @returns {Promise<Object>} Updated payment record
+ */
+async function confirmPaymentRecovery(paymentId, confirmation = {}) {
+  try {
+    const isSuccess = confirmation.status === 'recovered' || confirmation.event === 'recovery.confirmed';
+    const newStatus = isSuccess ? 'recovered' : 'partial';
+    const outcomeText = confirmation.note || (isSuccess ? 'Settlement confirmed via gateway webhook' : 'Payment retry failed at gateway');
+
+    // Update payment record in database
+    const { data: updated, error } = await supabase
+      .from('payments')
+      .update({
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', paymentId)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to confirm payment recovery: ${error.message}`);
+    }
+
+    const amount = updated ? updated.amount : (confirmation.data?.amount || 0);
+
+    // Append to recovery_history
+    try {
+      await supabase.from('recovery_history').insert([
+        {
+          payment_id: paymentId,
+          action: 'confirm',
+          outcome: `${confirmation.provenance ? '[' + confirmation.provenance + '] ' : ''}${outcomeText}`,
+          ts: new Date().toISOString()
+        }
+      ]);
+    } catch (hErr) {
+      console.warn('Warning inserting confirmation history:', hErr.message);
+    }
+
+    // Append to audit_log
+    await appendAudit({
+      ts: new Date().toISOString(),
+      payment_id: paymentId,
+      stage: 'confirm',
+      action: isSuccess ? 'recovery_confirmed' : 'recovery_unsuccessful',
+      explanation: `${confirmation.provenance ? '[' + confirmation.provenance + '] ' : ''}${outcomeText} — Amount: ₹${amount}`,
+      reason: isSuccess ? 'settlement_verified' : 'gateway_rejection',
+      amount: amount
+    });
+
+    return updated || { id: paymentId, status: newStatus, amount };
+  } catch (err) {
+    console.error(`Error confirming payment recovery for ${paymentId}:`, err.message);
+    throw err;
+  }
+}
+
+/**
+ * Persistent Idempotency Store (Supabase-backed processed_events table)
+ * Check if a webhook event ID has already been processed.
+ * 
+ * @param {string} eventId - Unique webhook event identifier
+ * @returns {Promise<boolean>} True if duplicate, false if new
+ */
+async function isEventProcessed(eventId) {
+  if (!eventId) return false;
+
+  // Check in-memory fast cache first
+  if (inMemoryProcessedEvents.has(eventId)) {
+    return true;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('processed_events')
+      .select('event_id')
+      .eq('event_id', eventId)
+      .maybeSingle();
+
+    if (error) {
+      // If table doesn't exist yet, fallback gracefully to in-memory set
+      return inMemoryProcessedEvents.has(eventId);
+    }
+
+    if (data) {
+      inMemoryProcessedEvents.add(eventId);
+      return true;
+    }
+
+    return false;
+  } catch (err) {
+    return inMemoryProcessedEvents.has(eventId);
+  }
+}
+
+/**
+ * Record a processed webhook event in the persistent Supabase store.
+ * 
+ * @param {string} eventId - Unique webhook event identifier
+ * @param {string} eventType - Event type (e.g. recovery.confirmed)
+ * @returns {Promise<void>}
+ */
+async function recordProcessedEvent(eventId, eventType = 'unknown') {
+  if (!eventId) return;
+
+  inMemoryProcessedEvents.add(eventId);
+
+  try {
+    const { error } = await supabase
+      .from('processed_events')
+      .insert([
+        {
+          event_id: eventId,
+          event_type: eventType,
+          processed_at: new Date().toISOString()
+        }
+      ]);
+
+    if (error && error.code !== '23505') { // Ignore unique conflict error code
+      // If table is missing, log warning
+      console.warn('Note on processed_events table insert:', error.message);
+    }
+  } catch (err) {
+    // Non-blocking fallback
   }
 }
 
@@ -222,6 +361,9 @@ module.exports = {
   loadPayments,
   upsertPayment,
   upsertPayments,
+  confirmPaymentRecovery,
+  isEventProcessed,
+  recordProcessedEvent,
   appendAudit,
   appendAudits,
   loadAudit,

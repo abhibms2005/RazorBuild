@@ -35,13 +35,12 @@ const stages = [
   {
     step: "02",
     title: "Diagnose",
-    body: "Each failure is classified into a known cause with confidence, customer tenure, and eligibility signals used by the decision layer.",
+    body: "Each failure is classified into a known cause with calibrated confidence, retry eligibility, and contextual business explanations.",
     code: `{
   "cause": "insufficient_funds",
   "confidence": 0.95,
-  "customer_tenure": "18 months",
-  "retry_eligible": true,
-  "risk_score": 0.08
+  "retryEligible": true,
+  "explanation": "Cardholder account balance insufficient at settlement time"
 }`,
     tone: "text-sky-300",
     glow: "border-sky-400/30 shadow-[0_0_20px_rgba(56,189,248,0.12)]",

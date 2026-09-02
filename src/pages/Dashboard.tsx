@@ -40,6 +40,7 @@ export default function Dashboard() {
     audit,
     loading,
     error,
+    isOfflineMode,
     running,
     successFlash,
     runBatch,
@@ -82,6 +83,19 @@ export default function Dashboard() {
 
       {/* Header section */}
       <section className="px-5 pt-4 pb-6 sm:px-8 sm:pt-6 sm:pb-8 lg:px-12 max-w-7xl mx-auto">
+        {/* Environment & Data Provenance Badges */}
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-300 bg-emerald-400/10 border border-emerald-400/20 px-2.5 py-0.5 rounded">
+            Environment: Sandbox Simulation
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-ember bg-ember/10 border border-ember/20 px-2.5 py-0.5 rounded">
+            Data Source: Synthetic Sandbox Data
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-sky-300 bg-sky-400/10 border border-sky-400/20 px-2.5 py-0.5 rounded">
+            Agent: 7-Stage Governed Policy Loop
+          </span>
+        </div>
+
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -104,7 +118,7 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* Error state */}
+      {/* Visible Offline / Error State Banner */}
       <AnimatePresence>
         {error && (
           <motion.section
@@ -113,16 +127,20 @@ export default function Dashboard() {
             exit={{ opacity: 0, y: -10 }}
             className="px-5 pb-4 sm:px-8 lg:px-12 max-w-7xl mx-auto"
           >
-            <div className="bg-red-950/40 border border-red-500/30 px-4 py-3 flex items-center justify-between rounded-lg backdrop-blur-md">
+            <div className={`border px-4 py-3 flex items-center justify-between rounded-lg backdrop-blur-md ${
+              isOfflineMode 
+                ? "bg-amber-950/40 border-amber-500/40 text-amber-200" 
+                : "bg-red-950/40 border-red-500/30 text-red-300"
+            }`}>
               <div className="flex items-center gap-2.5">
-                <span className="h-2 w-2 rounded-full bg-red-400 animate-pulse" />
-                <span className="font-mono text-xs text-red-300">{error}</span>
+                <span className={`h-2 w-2 rounded-full animate-pulse ${isOfflineMode ? "bg-amber-400" : "bg-red-400"}`} />
+                <span className="font-mono text-xs">{error}</span>
               </div>
               <button
                 onClick={retry}
-                className="font-mono text-xs text-red-300 hover:text-red-200 underline font-semibold"
+                className="font-mono text-xs underline font-semibold hover:opacity-80 transition-opacity"
               >
-                Retry connection
+                Retry Connection
               </button>
             </div>
           </motion.section>
@@ -144,30 +162,30 @@ export default function Dashboard() {
                   highlight: highlightStats.has("total_at_risk"),
                 },
                 {
-                  label: "Recovered",
+                  label: "Confirmed recovered",
                   value: formatINR(summary.recovered),
                   percent: summary.recovery_rate,
                   tone: "mint",
                   highlight: highlightStats.has("recovered"),
                 },
                 {
-                  label: "Awaiting payment",
+                  label: "Awaiting gateway/link",
                   value: formatINR(summary.awaiting),
-                  percent: 27.6,
+                  percent: summary.total_at_risk > 0 ? Math.round((summary.awaiting / summary.total_at_risk) * 1000) / 10 : 0,
                   tone: "blue",
                   highlight: highlightStats.has("awaiting"),
                 },
                 {
-                  label: "Manual review",
+                  label: "Manual review queue",
                   value: formatINR(summary.manual_review),
-                  percent: 15.5,
+                  percent: summary.total_at_risk > 0 ? Math.round((summary.manual_review / summary.total_at_risk) * 1000) / 10 : 0,
                   tone: "amber",
                   highlight: highlightStats.has("manual_review"),
                 },
                 {
                   label: "Handled errors",
                   value: formatINR(summary.errors),
-                  percent: 12.1,
+                  percent: summary.total_at_risk > 0 ? Math.round((summary.errors / summary.total_at_risk) * 1000) / 10 : 0,
                   tone: "red",
                   highlight: highlightStats.has("errors"),
                 },
@@ -180,9 +198,9 @@ export default function Dashboard() {
                 <div className="flex items-center justify-between border-b border-chalk-muted/10 px-4 py-3 bg-void/60">
                   <div>
                     <Eyebrow tone={running ? "amber" : "mint"}>
-                      {running ? "Processing" : "System live"}
+                      {running ? "Executing 7 stages" : "System live"}
                     </Eyebrow>
-                    <p className="mt-0.5 text-xs text-chalk-dim">Batch monitor</p>
+                    <p className="mt-0.5 text-xs text-chalk-dim">Policy supervisor</p>
                   </div>
                   <StatusDot tone={running ? "amber" : "mint"} />
                 </div>

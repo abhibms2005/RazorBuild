@@ -1,24 +1,23 @@
 /**
- * Recovery Engine - Deterministic Decision & Action Layer
- * Coordinates diagnosis, policy playbook mapping, and audit stream emission.
+ * Recovery Engine - Deterministic Decision & Action Layer (Track 03 - AI Revenue Recovery)
+ * 
+ * 7-Stage Pipeline Architecture:
+ * 1. Detect & Validate
+ * 2. Deterministic Rule Diagnosis (CAUSE_MAP fast-path)
+ * 3. AI Advisor Consultation (for low-confidence / unclassified cases)
+ * 4. Recovery Strategy Recommendation (Proposes, never decides)
+ * 5. Deterministic Policy Engine Check (Hard constraints & stopping rules)
+ * 6. Execution (Real Ethereal email send / Gateway queue)
+ * 7. Confirmation (Delegated strictly to verified webhook events)
  */
 
-const { diagnose, CAUSE_MAP } = require('./diagnosis.js');
-
-const PLAYBOOK = {
-  schedule_smart_retry: 'schedule_smart_retry',
-  send_update_payment_link: 'send_update_payment_link',
-  single_retry_then_escalate: 'single_retry_then_escalate',
-  immediate_retry: 'immediate_retry',
-  escalate_alternate_method: 'escalate_alternate_method',
-  manual_review: 'manual_review'
-};
-
-const MAX_ATTEMPTS = 3;
-const MIN_CONFIDENCE_TO_ACT = 0.80;
+const { diagnoseAsync, CAUSE_MAP } = require('./diagnosis.js');
+const { evaluatePolicy, PLAYBOOK, MAX_ATTEMPTS, MIN_CONFIDENCE_TO_ACT } = require('./policyEngine.js');
+const { sendPaymentUpdateLink } = require('./notificationService.js');
 
 /**
- * Process a single payment record through detection, diagnosis, decision, and execution stages.
+ * Process a single payment record through the governed 7-stage recovery pipeline.
+ * 
  * @param {Object} payment - Payment record to process
  * @param {Object} options - Execution context
  * @param {Function} options.appendAudit - Function to write to audit_log
@@ -36,7 +35,9 @@ async function processRecord(payment, { appendAudit = async () => {}, auditBuffe
     }
   };
 
-  // Stage 1: Detect / Validate
+  // -------------------------------------------------------------
+  // Stage 1: Detect & Validate
+  // -------------------------------------------------------------
   if (!payment || payment.amount === undefined || payment.amount === null) {
     await logAudit({
       ts,
@@ -58,7 +59,7 @@ async function processRecord(payment, { appendAudit = async () => {}, auditBuffe
     };
   }
 
-  // Skip already recovered payments
+  // If already verified recovered, keep durable state
   if (payment.status === 'recovered') {
     return {
       success: true,
@@ -68,8 +69,22 @@ async function processRecord(payment, { appendAudit = async () => {}, auditBuffe
     };
   }
 
-  // Stage 2: Diagnose
-  const diagnosis = diagnose(payment);
+  await logAudit({
+    ts,
+    payment_id: payment.id,
+    stage: 'detect',
+    cause: payment.failure_code || 'payment_failed',
+    confidence: 1.0,
+    action: 'event_detected',
+    explanation: `Ingested payment failure event for ${payment.customer_name || 'customer'} (₹${payment.amount})`,
+    reason: payment.failure_reason || 'failure_event',
+    amount: payment.amount
+  });
+
+  // -------------------------------------------------------------
+  // Stage 2 & 3: Diagnose & AI Advisor Consult
+  // -------------------------------------------------------------
+  const diagnosis = await diagnoseAsync(payment);
 
   await logAudit({
     ts,
@@ -77,85 +92,144 @@ async function processRecord(payment, { appendAudit = async () => {}, auditBuffe
     stage: 'diagnose',
     cause: diagnosis.cause,
     confidence: diagnosis.confidence,
-    action: 'diagnose_completed',
+    action: 'rule_diagnosis_completed',
     explanation: diagnosis.explanation,
     reason: diagnosis.reason,
     amount: payment.amount
   });
 
-  // Stage 3: Decide (Playbook Policy Mapping)
-  let action = PLAYBOOK.manual_review;
-  let status = 'pending';
-  let explanation = '';
-  const currentAttempts = Number(payment.attempt_number || 1);
+  // If AI Advisor was consulted (low confidence < 0.80 or unknown failure), log Stage 3
+  if (diagnosis.isAiDiagnosed && diagnosis.aiRecommendation) {
+    await logAudit({
+      ts,
+      payment_id: payment.id,
+      stage: 'ai_consult',
+      cause: diagnosis.cause,
+      confidence: diagnosis.aiRecommendation.confidence || diagnosis.confidence,
+      action: 'ai_advisor_consulted',
+      explanation: `[AI Advisor (${diagnosis.aiRecommendation.model_used})]: ${diagnosis.aiRecommendation.business_explanation}`,
+      reason: diagnosis.aiRecommendation.technical_rationale || 'low_rule_confidence',
+      amount: payment.amount
+    });
+  }
 
-  if (diagnosis.confidence < MIN_CONFIDENCE_TO_ACT) {
-    // Low confidence safeguard -> escalate to human review
-    action = PLAYBOOK.manual_review;
-    status = 'partial';
-    explanation = `Confidence (${diagnosis.confidence}) < ${MIN_CONFIDENCE_TO_ACT} threshold: routed to finance reviewer`;
+  // -------------------------------------------------------------
+  // Stage 4: Strategy Recommendation (AI / Rule proposes, never decides)
+  // -------------------------------------------------------------
+  const currentAttempts = Number(payment.attempt_number || 1);
+  let proposedAction = PLAYBOOK.manual_review;
+  let proposedExplanation = '';
+
+  if (diagnosis.isAiDiagnosed && diagnosis.aiRecommendation?.recommended_action) {
+    // Propose AI-suggested playbook action
+    proposedAction = diagnosis.aiRecommendation.recommended_action;
+    proposedExplanation = `AI proposed [${proposedAction}] based on failure context`;
   } else if (diagnosis.cause === 'insufficient_funds') {
     if (currentAttempts < MAX_ATTEMPTS) {
-      action = PLAYBOOK.schedule_smart_retry;
-      status = 'pending';
+      proposedAction = PLAYBOOK.schedule_smart_retry;
       const cooldownHours = currentAttempts === 1 ? 4 : 8;
-      explanation = `Queued smart retry (${currentAttempts}/${MAX_ATTEMPTS}) with ${cooldownHours}h cooldown window`;
+      proposedExplanation = `Queued smart retry (${currentAttempts}/${MAX_ATTEMPTS}) with ${cooldownHours}h cooldown window`;
     } else {
-      action = PLAYBOOK.send_update_payment_link;
-      status = 'partial';
-      explanation = `Max retries (${MAX_ATTEMPTS}) reached for insufficient funds; dispatched direct payment link`;
+      proposedAction = PLAYBOOK.send_update_payment_link;
+      proposedExplanation = `Max retries (${MAX_ATTEMPTS}) reached for insufficient funds; proposed direct payment link`;
     }
   } else if (diagnosis.cause === 'bank_technical_error') {
     if (currentAttempts < MAX_ATTEMPTS) {
-      action = currentAttempts === 1 ? PLAYBOOK.immediate_retry : PLAYBOOK.schedule_smart_retry;
-      if (currentAttempts === 1) {
-        status = 'recovered';
-        explanation = `Transient gateway error cleared on immediate retry — ₹${payment.amount} settled`;
-      } else {
-        status = 'pending';
-        explanation = `Transient error persisted; queued smart retry (${currentAttempts}/${MAX_ATTEMPTS})`;
-      }
+      proposedAction = currentAttempts === 1 ? PLAYBOOK.immediate_retry : PLAYBOOK.schedule_smart_retry;
+      proposedExplanation = `Transient gateway error; proposed ${proposedAction === PLAYBOOK.immediate_retry ? 'immediate secondary rail retry' : 'smart retry'}`;
     } else {
-      action = PLAYBOOK.manual_review;
-      status = 'partial';
-      explanation = `Bank gateway technical error persisted after ${MAX_ATTEMPTS} attempts; routed to ops`;
+      proposedAction = PLAYBOOK.manual_review;
+      proposedExplanation = `Bank gateway error persisted after ${MAX_ATTEMPTS} attempts; proposed ops review`;
     }
   } else if (diagnosis.cause === 'card_expired' || diagnosis.cause === 'authentication_failed') {
-    action = PLAYBOOK.send_update_payment_link;
-    status = 'partial';
-    explanation = `Dispatched localized payment link (SMS + email, 48h expiry) for ${diagnosis.cause.replace('_', ' ')}`;
+    proposedAction = PLAYBOOK.send_update_payment_link;
+    proposedExplanation = `Dispatched payment link for ${diagnosis.cause.replace(/_/g, ' ')}`;
   } else if (diagnosis.cause === 'card_blocked') {
-    action = PLAYBOOK.escalate_alternate_method;
-    status = 'partial';
-    explanation = 'Card frozen/blocked by issuer; initiated automated alternate method request (UPI/NetBanking)';
+    proposedAction = PLAYBOOK.escalate_alternate_method;
+    proposedExplanation = 'Card blocked by issuer; proposed alternate payment method request (UPI/NetBanking)';
   } else if (diagnosis.cause === 'risk_decline') {
-    action = PLAYBOOK.manual_review;
-    status = 'partial';
-    explanation = 'Bank risk decline flag; halted automated retries and opened ops audit ticket';
+    proposedAction = PLAYBOOK.manual_review;
+    proposedExplanation = 'Bank risk decline flag; proposed human ops review';
   } else {
-    action = PLAYBOOK.manual_review;
-    status = 'partial';
-    explanation = `Unclassified failure (${diagnosis.cause}); dispatched to manual review queue`;
+    proposedAction = PLAYBOOK.manual_review;
+    proposedExplanation = `Unclassified failure (${diagnosis.cause}); proposed manual review`;
   }
 
-  // Audit decision
   await logAudit({
     ts,
     payment_id: payment.id,
-    stage: 'decide',
+    stage: 'recommend',
     cause: diagnosis.cause,
     confidence: diagnosis.confidence,
-    action,
-    explanation,
+    action: proposedAction,
+    explanation: proposedExplanation,
     reason: diagnosis.reason,
     amount: payment.amount
   });
 
-  // Stage 4: Execute & Update payment record
+  // -------------------------------------------------------------
+  // Stage 5: Policy Engine Check (Deterministic safety rails)
+  // -------------------------------------------------------------
+  const activeConfidence = diagnosis.isAiDiagnosed && diagnosis.aiRecommendation?.confidence
+    ? diagnosis.aiRecommendation.confidence
+    : diagnosis.confidence;
+
+  const policyResult = evaluatePolicy(payment, proposedAction, activeConfidence, diagnosis.cause);
+
+  await logAudit({
+    ts,
+    payment_id: payment.id,
+    stage: 'policy_check',
+    cause: diagnosis.cause,
+    confidence: activeConfidence,
+    action: policyResult.action,
+    result: policyResult.decision,
+    explanation: `[Policy ${policyResult.decision}]: ${policyResult.reason}`,
+    reason: policyResult.policy_flags.join(', '),
+    amount: payment.amount
+  });
+
+  const finalAction = policyResult.action;
+
+  // -------------------------------------------------------------
+  // Stage 6: Execute & State Machine Transition
+  // -------------------------------------------------------------
+  // INVARIANT: recoveryEngine NEVER jumps straight to 'recovered'!
+  // State transitions:
+  // - Automated actions (retries, payment links) -> 'pending_confirmation'
+  // - Manual review / blocked policies -> 'partial'
+  let executionStatus = 'pending_confirmation';
+  let executionDetails = '';
+  let notificationResult = null;
+
+  if (finalAction === PLAYBOOK.manual_review || finalAction === PLAYBOOK.escalate_alternate_method) {
+    executionStatus = 'partial';
+    executionDetails = `Escalated to human ops ticket #REV-${payment.id.slice(-4).toUpperCase()}`;
+  } else if (finalAction === PLAYBOOK.send_update_payment_link) {
+    // Real email dispatch via Ethereal SMTP / Resend
+    notificationResult = await sendPaymentUpdateLink({
+      to: payment.customer_email,
+      customerName: payment.customer_name,
+      amount: payment.amount,
+      paymentId: payment.id,
+      subscriptionId: payment.subscription_id,
+      cause: diagnosis.cause
+    });
+
+    executionStatus = 'pending_confirmation';
+    executionDetails = notificationResult.success
+      ? `Real email dispatched via Ethereal SMTP [Preview: ${notificationResult.previewUrl}]`
+      : `Email dispatch queued (retry window active)`;
+  } else if (finalAction === PLAYBOOK.immediate_retry || finalAction === PLAYBOOK.schedule_smart_retry) {
+    executionStatus = 'pending_confirmation';
+    executionDetails = `Dispatched gateway retry directive (attempt ${currentAttempts + 1}/${MAX_ATTEMPTS}); awaiting confirmation event`;
+  }
+
+  // Update payment record attributes
   payment.diagnosis = diagnosis.cause;
-  payment.diagnosis_confidence = diagnosis.confidence;
-  payment.recovery_action = action;
-  payment.status = status;
+  payment.diagnosis_confidence = activeConfidence;
+  payment.recovery_action = finalAction;
+  payment.status = executionStatus;
   payment.attempt_number = currentAttempts + 1;
   payment.updated_at = new Date().toISOString();
 
@@ -163,23 +237,26 @@ async function processRecord(payment, { appendAudit = async () => {}, auditBuffe
     payment.recovery_history = [];
   }
 
+  const historyOutcome = notificationResult?.previewUrl
+    ? `${executionDetails} (Preview: ${notificationResult.previewUrl})`
+    : executionDetails;
+
   payment.recovery_history.push({
     payment_id: payment.id,
-    action,
-    outcome: explanation,
+    action: finalAction,
+    outcome: historyOutcome,
     ts: new Date().toISOString()
   });
 
-  // Audit execution
   await logAudit({
     ts: new Date().toISOString(),
     payment_id: payment.id,
     stage: 'execute',
     cause: diagnosis.cause,
-    confidence: diagnosis.confidence,
-    action,
-    result: 'action_dispatched',
-    explanation: `Successfully executed policy action: [${action}]`,
+    confidence: activeConfidence,
+    action: finalAction,
+    result: 'dispatched',
+    explanation: executionDetails,
     reason: diagnosis.reason,
     amount: payment.amount
   });
@@ -188,18 +265,21 @@ async function processRecord(payment, { appendAudit = async () => {}, auditBuffe
     success: true,
     malformed: false,
     payment,
-    action,
+    action: finalAction,
+    policyDecision: policyResult.decision,
+    isAiDiagnosed: diagnosis.isAiDiagnosed || false,
     diagnosis
   };
 }
 
 /**
- * Process a batch of payments and generate recovery actions
+ * Process a batch of payments through the governed recovery pipeline.
+ * 
  * @param {Array} payments - Array of payment records
- * @param {Object} callbacks - Callback functions
- * @param {Function} [callbacks.appendAudit] - Function to append a single audit entry
- * @param {Function} [callbacks.appendAudits] - Function to batch append audit entries
- * @returns {Promise<Object>} Summary of batch processing results
+ * @param {Object} callbacks - Callbacks
+ * @param {Function} [callbacks.appendAudit] - Function to append single audit
+ * @param {Function} [callbacks.appendAudits] - Function to append batch audits
+ * @returns {Promise<Object>} Batch execution summary
  */
 async function processBatch(payments, { appendAudit = async () => {}, appendAudits = null } = {}) {
   const summary = {
@@ -207,7 +287,10 @@ async function processBatch(payments, { appendAudit = async () => {}, appendAudi
     successful: 0,
     failed: 0,
     malformed: 0,
-    recovered: 0,
+    pending_confirmation: 0,
+    manual_review: 0,
+    ai_consult_invoked: 0,
+    policy_blocked: 0,
     actions: {},
     errors: []
   };
@@ -241,9 +324,23 @@ async function processBatch(payments, { appendAudit = async () => {}, appendAudi
         summary.malformed++;
       } else if (result.success) {
         summary.successful++;
-        if (result.payment && result.payment.status === 'recovered') {
-          summary.recovered++;
+
+        if (result.isAiDiagnosed) {
+          summary.ai_consult_invoked++;
         }
+
+        if (result.policyDecision === 'BLOCKED') {
+          summary.policy_blocked++;
+        }
+
+        if (result.payment) {
+          if (result.payment.status === 'pending_confirmation') {
+            summary.pending_confirmation++;
+          } else if (result.payment.status === 'partial') {
+            summary.manual_review++;
+          }
+        }
+
         if (result.action) {
           summary.actions[result.action] = (summary.actions[result.action] || 0) + 1;
         }
@@ -277,7 +374,7 @@ async function processBatch(payments, { appendAudit = async () => {}, appendAudi
     ts: new Date().toISOString(),
     stage: 'execute',
     action: 'batch_process_completed',
-    explanation: `Batch run completed: ${summary.successful} processed, ${summary.malformed} malformed, ${summary.failed} errors`,
+    explanation: `Batch run completed: ${summary.successful} processed (${summary.ai_consult_invoked} AI-assisted, ${summary.pending_confirmation} awaiting gateway confirmation, ${summary.manual_review} routed to review, ${summary.policy_blocked} policy-blocked)`,
     amount: null
   };
 

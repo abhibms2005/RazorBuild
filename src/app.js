@@ -9,12 +9,16 @@ const app = express();
 // Get configuration from environment
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 
-// Middleware
-app.use(express.json({ limit: '50mb' }));
+// Middleware with rawBody capture for cryptographic HMAC verification
+app.use(express.json({
+  limit: '50mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  }
+}));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // CORS Configuration
-// Allow requests from frontend and localhost for development
 const corsOptions = {
   origin: [FRONTEND_ORIGIN, 'http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:8888'],
   credentials: true,

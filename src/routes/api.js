@@ -1,13 +1,14 @@
 const express = require('express');
 const dataStore = require('../services/dataStore.js');
 const { processBatch } = require('../services/recoveryEngine.js');
+const { simulateGatewayConfirmations } = require('../services/simulatedGateway.js');
 const supabase = require('../services/supabaseClient.js');
 
 const router = express.Router();
 
 /**
  * GET /api/health-db
- * Verify database connection by running a trivial Supabase query
+ * Verify database connection by running a query
  */
 router.get('/health-db', async (req, res) => {
   try {
@@ -61,7 +62,7 @@ router.get('/records', async (req, res) => {
 
 /**
  * GET /api/summary
- * Retrieve aggregated payment statistics
+ * Retrieve aggregated payment statistics computed from real database records
  */
 router.get('/summary', async (req, res) => {
   try {
@@ -69,24 +70,48 @@ router.get('/summary', async (req, res) => {
 
     const summary = {
       total: payments.length,
+      total_at_risk: 0,
+      recovered: 0,
+      awaiting: 0,
+      manual_review: 0,
+      errors: 0,
+      recovery_rate: 0,
       byStatus: {
         pending: 0,
+        pending_confirmation: 0,
         partial: 0,
         recovered: 0
       },
-      totalAmount: 0,
-      averageRecoveryRate: 0
+      counts: {
+        recovered: 0,
+        awaiting: 0,
+        manual_review: 0,
+        errors: 0
+      }
     };
 
     payments.forEach(payment => {
+      const amt = Number(payment.amount) || 0;
+      summary.total_at_risk += amt;
       summary.byStatus[payment.status] = (summary.byStatus[payment.status] || 0) + 1;
-      if (payment.amount) {
-        summary.totalAmount += payment.amount;
+
+      if (payment.status === 'recovered') {
+        summary.recovered += amt;
+        summary.counts.recovered++;
+      } else if (payment.status === 'pending' || payment.status === 'pending_confirmation') {
+        summary.awaiting += amt;
+        summary.counts.awaiting++;
+      } else if (payment.status === 'partial') {
+        summary.manual_review += amt;
+        summary.counts.manual_review++;
+      } else {
+        summary.errors += amt;
+        summary.counts.errors++;
       }
     });
 
-    if (summary.total > 0) {
-      summary.averageRecoveryRate = Math.round(((summary.byStatus.recovered / summary.total) * 100) * 10) / 10;
+    if (summary.total_at_risk > 0) {
+      summary.recovery_rate = Math.round(((summary.recovered / summary.total_at_risk) * 100) * 10) / 10;
     }
 
     res.json({
@@ -104,7 +129,7 @@ router.get('/summary', async (req, res) => {
 
 /**
  * GET /api/audit
- * Retrieve audit log entries
+ * Retrieve immutable audit log entries
  */
 router.get('/audit', async (req, res) => {
   try {
@@ -126,11 +151,11 @@ router.get('/audit', async (req, res) => {
 
 /**
  * POST /api/run-batch
- * Trigger a recovery batch run against the database
+ * Trigger a governed recovery batch run with simulated gateway confirmations
  */
 router.post('/run-batch', async (req, res) => {
   try {
-    // Load all payments from database
+    // 1. Load all payments from database
     const payments = await dataStore.loadPayments();
 
     if (payments.length === 0) {
@@ -147,41 +172,54 @@ router.post('/run-batch', async (req, res) => {
       });
     }
 
-    // Reset audit log for fresh batch run
+    // 2. Reset audit log for fresh batch run
     await dataStore.resetAudit();
 
-    // Process batch through recovery engine with batch audit logging
+    // 3. Process batch through 7-stage recovery engine
     const batchSummary = await processBatch(payments, {
       appendAudit: dataStore.appendAudit,
       appendAudits: dataStore.appendAudits
     });
 
-    // Write results back to database in a single batch call
-    let successfulWrites = 0;
-    let failedWrites = 0;
+    // 4. Batch upsert payment states
+    await dataStore.upsertPayments(payments);
 
-    try {
-      const upserted = await dataStore.upsertPayments(payments);
-      successfulWrites = upserted.length;
-    } catch (error) {
-      console.error('Failed to batch upsert payments:', error.message);
-      failedWrites = payments.length;
-    }
+    // 5. Trigger Simulated Gateway Confirmations (Stage 7)
+    const pendingPayments = payments.filter(p => p.status === 'pending_confirmation');
+    const port = process.env.PORT || 3000;
 
-    // Return response with updated state
+    await simulateGatewayConfirmations(pendingPayments, {
+      webhookUrl: `http://127.0.0.1:${port}/webhooks/payment`,
+      directHandler: async ({ body }) => {
+        if (body.event === 'recovery.confirmed') {
+          await dataStore.confirmPaymentRecovery(body.data.id, {
+            status: 'recovered',
+            event: body.event,
+            provenance: body.provenance,
+            note: body.data.simulation_note
+          });
+        } else {
+          await dataStore.confirmPaymentRecovery(body.data.id, {
+            status: 'partial',
+            event: body.event,
+            provenance: body.provenance,
+            note: body.data.simulation_note
+          });
+        }
+      }
+    });
+
+    // 6. Return response with final updated state
     const updatedPayments = await dataStore.loadPayments();
 
     res.json({
       status: 'success',
-      message: 'Batch run completed',
+      message: 'Governed batch run completed successfully',
       summary: batchSummary,
-      writeResults: {
-        successful: successfulWrites,
-        failed: failedWrites
-      },
       updatedState: updatedPayments
     });
   } catch (error) {
+    console.error('Batch run failed:', error);
     res.status(500).json({
       status: 'error',
       message: 'Batch run failed',
